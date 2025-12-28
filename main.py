@@ -10,7 +10,7 @@ load_dotenv()
 
 # 从环境变量中获取OpenAI API密钥
 # 如果你不想用.env文件，可以直接在这里替换为：openai.api_key = "你的API密钥"
-openai.api_key = os.getenv("sk-rUAhMzSZBJ4Xha3Wx4gMMZJvPQLGT44bvZ2izsk7QZx1rVvg")
+openai.api_key = "sk-rUAhMzSZBJ4Xha3Wx4gMMZJvPQLGT44bvZ2izsk7QZx1rVvg"
 
 # --- 2. 定义提示词模板 ---
 
@@ -56,7 +56,7 @@ def generate_script(prompt):
     try:
         # 新版本的客户端初始化方式
         client = openai.OpenAI(
-            api_key=os.getenv("OPENAI_API_KEY")  # 从环境变量获取密钥
+            api_key= "sk-rUAhMzSZBJ4Xha3Wx4gMMZJvPQLGT44bvZ2izsk7QZx1rVvg"
         )
         response = client.chat.completions.create(  # 新版本的接口
             model="gpt-3.5-turbo",
