@@ -10,7 +10,7 @@ load_dotenv()
 
 # 从环境变量中获取OpenAI API密钥
 # 如果你不想用.env文件，可以直接在这里替换为：openai.api_key = "你的API密钥"
-openai.api_key = os.getenv("OPENAI_API_KEY")
+openai.api_key = os.getenv("sk-rUAhMzSZBJ4Xha3Wx4gMMZJvPQLGT44bvZ2izsk7QZx1rVvg")
 
 # --- 2. 定义提示词模板 ---
 
