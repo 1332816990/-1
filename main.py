@@ -1,152 +1,234 @@
 import streamlit as st
-from openai import OpenAI
-from openai import AuthenticationError, RateLimitError, APIError
-import os
-import time
+import requests
+import json
 
-# --- 1. 配置和初始化 (安全优化：环境变量读取密钥 + 本地缓存，无硬编码) ---
+# ===================== 页面基础配置（科技蓝新风格） =====================
 st.set_page_config(
-    page_title="AI短视频脚本生成器",
-    page_icon="🎬",
-    layout="wide",
-    initial_sidebar_state="expanded",
+    page_title="AI内容创作助手 (Kimi 驱动)",
+    page_icon="🚀",
+    layout="wide"
 )
 
-# 侧边栏配置密钥，安全优先，不会硬编码在代码里
-with st.sidebar:
-    st.title("🔑 API配置")
-    API_KEY = st.text_input("请输入你的OpenAI API密钥", type="password", value=st.session_state.get("api_key", ""))
-    if API_KEY:
-        st.session_state["api_key"] = API_KEY  # 本地缓存密钥，无需重复输入
-    st.warning("✅ 密钥仅本地缓存，不会上传任何平台，安全可靠！")
-    st.divider()
-    st.info(
-        "风格说明：\n✅幽默搞笑：适合短视频爆款\n✅干货教学：步骤清晰易模仿\n✅情感共鸣：容易涨粉\n✅生活日常：流量稳定\n✅探店测评：转化率高")
+# 自定义样式（科技蓝为主色调）
+st.markdown("""
+    <style>
+    /* 全局样式 */
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+    h1, h2, h3, h4 {
+        color: #0F172A; /* 深灰色标题 */
+    }
+    p, li, div {
+        color: #334155; /* 标准文本颜色 */
+    }
 
-# 初始化OpenAI客户端
-client = None
-if API_KEY and len(API_KEY) > 10:
-    client = OpenAI(api_key=API_KEY.strip())
+    /* 输入框样式 */
+    .stTextInput input, .stTextArea textarea, .stSelectbox select {
+        border-radius: 8px; 
+        border: 1px solid #CBD5E1; 
+        padding: 0.6rem;
+        font-size: 14px;
+        transition: border-color 0.3s, box-shadow 0.3s;
+    }
+    .stTextInput input:focus, .stTextArea textarea:focus, .stSelectbox select:focus {
+        border-color: #165DFF;
+        box-shadow: 0 0 0 3px rgba(22, 93, 255, 0.1);
+        outline: none;
+    }
 
-# --- 2. 定义提示词模板 (核心优化：拆分system+user角色，GPT理解更精准) ---
-# ✅ system角色：固定的AI身份、规则、格式要求（GPT的核心准则）
-SYSTEM_PROMPT = """
-你是一位资深的短视频内容策划与脚本撰写专家，擅长创作抖音、小红书爆款60秒短视频脚本。
-严格按照以下要求输出内容，缺一不可：
-1. 输出结构必须包含：视频标题、视频风格、背景音乐建议、脚本内容。
-2. 脚本内容必须用【标准markdown表格】呈现，固定五列：景号、景别、时长、画面、台词/音效，列名不可修改。
-3. 开头3秒必须是黄金3秒，快速抓住观众眼球，激发好奇心。
-4. 语言风格口语化、有网感，节奏明快，自然引导点赞、关注、评论互动。
-5. 时长总计严格控制在60秒左右，每个镜头时长标注格式为 0-3s 这种样式。
-6. 画面描述要详细，包含人物动作、表情、运镜方式，台词/音效区分旁白、对话、BGM、特效音。
-"""
+    /* 按钮样式 */
+    .stButton button {
+        background-color: #165DFF; 
+        color: white; 
+        border-radius: 8px; 
+        padding: 0.6rem 2rem;
+        border: none;
+        font-weight: 600;
+        transition: background-color 0.3s;
+    }
+    .stButton button:hover {
+        background-color: #0D47A1;
+    }
+
+    /* 侧边栏样式 */
+    [data-testid="stSidebar"] {
+        background-color: #F8FAFC;
+        border-right: 1px solid #E2E8F0;
+    }
+    [data-testid="stSidebar"] .stMarkdown {
+        padding: 0 1rem;
+    }
+
+    /* 卡片组件样式 */
+    .card {
+        background-color: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .card-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: #0F172A;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    /* 生成内容样式 */
+    .generated-content {
+        background-color: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-top: 1rem;
+        border-left: 4px solid #165DFF;
+        white-space: pre-wrap; /* 保留换行符 */
+    }
+    .topic-tag {
+        color: #165DFF;
+        font-weight: 600;
+    }
+
+    /* 开关和复选框 */
+    .stCheckbox [data-testid="stMarkdownContainer"] {
+        padding-left: 0.5rem;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 
-def get_user_prompt(topic, style):
-    """仅传递用户核心输入，精简token，GPT响应更快"""
-    return f"生成一个【{style}】风格的短视频脚本，视频主题：{topic}，时长约60秒。"
-
-
-# --- 3. 定义AI生成函数 (全量优化：细分异常捕获+参数调整+超时+重试) ---
-def generate_script(user_prompt):
-    """调用OpenAI API生成脚本，带完整异常处理"""
+# ===================== Kimi API 核心函数（保持不变） =====================
+def call_kimi_api(api_key, prompt, model="moonshot-v1-8k"):
+    """
+    调用Kimi（月之暗面）API生成内容
+    """
+    url = "https://api.moonshot.cn/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    data = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.9,
+        "max_tokens": 1500
+    }
     try:
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT.strip()},  # 正确的角色拆分
-                {"role": "user", "content": user_prompt.strip()}
-            ],
-            temperature=0.8,  # 提高一点随机性，脚本更有创意
-            top_p=0.9,  # 增加可控性，避免内容跑偏
-            max_tokens=3000,  # 足够生成完整脚本，不会截断
-            timeout=20,  # 超时设置，防止页面卡死
-        )
-        return response.choices[0].message.content.strip()
-
-    # 细分异常，精准提示错误原因，方便排查
-    except AuthenticationError:
-        return "❌ 认证失败：你的API密钥无效/过期，请检查密钥是否正确！"
-    except RateLimitError:
-        return "❌ 限流/额度不足：你的OpenAI账号额度用完，或请求频率过高，请稍后再试！"
-    except ConnectionError:
-        return "❌ 网络错误：无法连接到OpenAI服务器，请检查你的网络/科学上网配置！"
-    except APIError:
-        return "❌ API接口错误：OpenAI服务器暂时不可用，请稍后重试！"
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        response.raise_for_status()
+        result = response.json()
+        return result["choices"][0]["message"]["content"].strip()
+    except requests.exceptions.HTTPError as e:
+        return f"API请求错误：{e}，响应内容：{response.text}"
+    except requests.exceptions.Timeout:
+        return "API请求超时，请检查网络或稍后重试"
     except Exception as e:
-        return f"❌ 未知错误：{str(e)}"
+        return f"未知错误：{str(e)}"
 
 
-# --- 4. Streamlit 用户界面 (全量优化：体验+交互+样式) ---
-def main():
-    # 全局样式优化，让排版更美观
-    st.markdown("""
-        <style>
-            .stMarkdown { font-size: 15px; line-height: 1.6; }
-            .stButton>button { background-color: #165DFF; color: white; border-radius: 8px; }
-        </style>
-    """, unsafe_allow_html=True)
+# ===================== Streamlit 界面交互（科技蓝新风格） =====================
+# 侧边栏：API密钥配置
+with st.sidebar:
+    st.markdown('<div class="card-title">🔑 API 配置</div>', unsafe_allow_html=True)
+    kimi_api_key = st.text_input(
+        "Kimi API Key",
+        type="password",
+        placeholder="sk-...",
+        help="从月之暗面官网获取你的API密钥"
+    )
+    st.divider()
+    st.markdown('<div class="card-title">⚙️ 高级设置</div>', unsafe_allow_html=True)
+    model_option = st.selectbox(
+        "选择模型",
+        ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
+        index=0,
+        help="模型越大，支持的输入输出内容越长"
+    )
 
-    # 页面标题
-    st.title("🎬 AI短视频脚本生成器（优化完整版）")
-    st.markdown("---")
+# 主界面：AI内容创作助手
+st.title("🚀 AI 内容创作助手")
+st.subheader("基于 Kimi AI 生成高质量的文案、脚本和创意")
+st.markdown("---")
 
-    # 创建两列布局
-    col1, col2 = st.columns(2, gap="large")
+# 功能选择卡片
+st.markdown('<div class="card">', unsafe_allow_html=True)
+st.markdown('<div class="card-title">📝 选择创作类型</div>', unsafe_allow_html=True)
+function_type = st.radio(
+    "", # 隐藏默认标签
+    ["爆款话题推荐", "短视频文案", "直播口播脚本", "评论区互动话术"],
+    horizontal=True,
+    captions=["生成高热度的话题标签", "创作引人入胜的短视频脚本", "撰写专业的直播流程话术", "设计高互动性的评论回复"]
+)
+st.markdown('</div>', unsafe_allow_html=True)
 
-    # 左侧：输入区
-    with col1:
-        st.header("📝 输入你的想法")
-        topic = st.text_input("视频主题", placeholder="例如：5分钟快速出门妆、办公室减脂零食测评",
-                              help="必填，输入具体主题，生成效果更好")
-        style = st.selectbox("视频风格", ["幽默搞笑", "干货教学", "情感共鸣", "生活日常", "探店测评"])
+# 输入区卡片
+st.markdown('<div class="card">', unsafe_allow_html=True)
+st.markdown('<div class="card-title">💡 输入你的创作需求</div>', unsafe_allow_html=True)
+placeholder_map = {
+    "爆款话题推荐": "例如：生成10个关于「AI绘画」的高热度抖音话题。",
+    "短视频文案": "例如：为「一款便携咖啡机」写一个30秒的带货短视频文案，要求有吸引力的开头和明确的购买引导。",
+    "直播口播脚本": "例如：为「新书发布会」生成一个5分钟的直播开场和作者介绍脚本。",
+    "评论区互动话术": "例如：当粉丝问「产品什么时候发货」时，生成3种不同风格的回复话术。"
+}
+user_input = st.text_area(
+    "", # 隐藏默认标签
+    placeholder=placeholder_map[function_type],
+    height=150,
+    help="越详细的需求，生成的内容质量越高"
+)
 
-        # 新增：一键清空按钮
-        col_btn1, col_btn2 = st.columns(2)
-        with col_btn1:
-            generate_button = st.button("🚀 开始生成脚本", use_container_width=True)
-        with col_btn2:
-            clear_button = st.button("🗑️ 清空内容", use_container_width=True)
+# 附加选项
+col1, col2 = st.columns(2)
+with col1:
+    add_tags = st.checkbox("✅ 生成时附带热门标签（#xxx）", value=True)
+with col2:
+    add_bgm = st.checkbox("🎶 推荐适配的背景音乐", value=True)
 
-    # 右侧：输出区
-    with col2:
-        st.header("🎭 生成的短视频脚本")
-        # 核心优化：滚动容器展示脚本，内容再多也不会撑满页面
-        output_container = st.container(height=700, border=True)
-        with output_container:
-            if "script_content" in st.session_state:
-                st.markdown(st.session_state["script_content"])
-            else:
-                st.info("✨ 请在左侧输入视频主题并选择风格，点击「开始生成脚本」即可创作")
-
-    # 清空内容逻辑
-    if clear_button:
-        st.session_state.pop("script_content", None)
-        st.rerun()
-
-    # 生成脚本核心逻辑
-    if generate_button:
-        # 严谨校验：去空格后为空则报错
-        topic_clean = topic.strip()
-        if not topic_clean:
-            st.error("❌ 视频主题不能为空，也不能只输入空格！")
-        elif not client:
-            st.error("❌ 请先在左侧边栏输入你的OpenAI API密钥！")
-        else:
-            # 加载动画绑定输出区，视觉聚焦
-            with output_container:
-                with st.spinner("🎨 AI正在构思爆款脚本，正在生成表格结构，请稍候..."):
-                    user_prompt = get_user_prompt(topic_clean, style)
-                    script = generate_script(user_prompt)
-                    st.session_state["script_content"] = script
-                    st.markdown(script)
-
-            # 成功提示在输出区下方，视觉统一
-            st.success("✅ 脚本生成完成！可直接复制使用，祝你的视频爆火～")
-            # 新增：一键复制脚本功能，超级实用
-            st.code(st.session_state["script_content"], language="markdown")
+st.markdown('</div>', unsafe_allow_html=True)
 
 
-# --- 运行应用 ---
-if __name__ == "__main__":
-    main()
+# 生成按钮
+if st.button("🔥 开始创作", use_container_width=True):
+    if not kimi_api_key:
+        st.error("❌ 请先在左侧侧边栏输入你的 Kimi API Key！")
+    elif not user_input.strip():
+        st.warning("⚠️ 创作需求不能为空，请输入你的想法。")
+    else:
+        # 构建Prompt
+        prompt_base = f"""
+        你是一位专业的内容策略师。请根据用户需求，创作一份高质量的「{function_type}」。
+        用户需求：「{user_input}」
+        创作要求：
+        1. 内容必须原创、专业且符合主流平台规范。
+        2. 语言风格需根据类型调整，或口语化、或正式、或幽默。
+        3. 结构清晰，重点突出，具有很强的吸引力和实用性。
+        """
+        if add_tags:
+            prompt_base += "4. 在内容末尾，生成5-8个与主题高度相关的热门标签（格式：#话题名）。"
+        if add_bgm and function_type in ["短视频文案", "直播口播脚本"]:
+            prompt_base += "5. 推荐2-3首适配内容风格和情感的背景音乐（说明推荐理由）。"
+
+        # 显示加载状态并生成内容
+        with st.spinner("🤖 AI 正在深度思考，为您创作中..."):
+            generated_text = call_kimi_api(kimi_api_key, prompt_base, model_option)
+
+        # 展示结果
+        st.markdown("---")
+        st.markdown('<div class="card-title">🎯 创作结果</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="generated-content">{generated_text}</div>', unsafe_allow_html=True)
+        st.success("✅ 创作完成！您可以直接复制使用。")
+
+# 示例提示
+with st.expander("📌 点击查看优秀需求示例"):
+    st.write("""
+    *   **爆款话题推荐**: 为「宠物智能喂食器」生成10个适合小红书平台的高热度话题。
+    *   **短视频文案**: 为「一场说走就走的露营」创作一个富有感染力的Vlog短视频脚本。
+    *   **直播口播脚本**: 撰写一份「知识付费课程」的直播引流和转化话术，包含破冰、价值塑造和限时优惠环节。
+    *   **评论区互动话术**: 当有客户在评论区反馈「产品有瑕疵」时，生成一套专业且能安抚情绪的危机公关回复话术。
+    """)
