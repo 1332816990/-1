@@ -1,0 +1,11 @@
+# AI文字生成工具
+一个基于Streamlit和OpenAI API的小红书/短视频文案生成工具。
+
+## 功能
+- 输入主题和风格，自动生成结构化文案
+- 支持小红书笔记、短视频脚本等格式
+
+## 使用方法
+1. 安装依赖：`pip install -r requirements.txt`
+2. 配置API密钥（在`.env`文件中填写）
+3. 运行：`streamlit run main.py`
