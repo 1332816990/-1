@@ -1,6 +1,10 @@
 import streamlit as st
-import requests
 import json
+# 按要求使用指定的新版LangChain导入
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.callbacks import StreamingStdOutCallbackHandler
 
 # ===================== 页面基础配置（保留科技蓝风格） =====================
 st.set_page_config(
@@ -105,37 +109,57 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ===================== Kimi API 核心函数（完全保留） =====================
-def call_kimi_api(api_key, prompt, model="moonshot-v1-8k"):
+# ===================== LangChain 封装 Kimi API 核心函数（新版规范） =====================
+def call_kimi_api_langchain(api_key, prompt, model="moonshot-v1-8k"):
     """
-    调用Kimi（月之暗面）API生成诗歌内容
+    使用新版LangChain调用Kimi API，解决编码错误
     """
-    url = "https://api.moonshot.cn/v1/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    data = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.9,
-        "max_tokens": 1500
-    }
     try:
-        response = requests.post(url, headers=headers, json=data, timeout=30)
-        response.raise_for_status()
-        result = response.json()
-        return result["choices"][0]["message"]["content"].strip()
-    except requests.exceptions.HTTPError as e:
-        return f"API请求错误：{e}，响应内容：{response.text}"
-    except requests.exceptions.Timeout:
-        return "API请求超时，请检查网络或稍后重试"
+        # 强制设置UTF-8编码（核心解决步骤）
+        import os
+        os.environ["PYTHONIOENCODING"] = "utf-8"
+        os.environ["LC_ALL"] = "en_US.UTF-8"
+
+        # 1. 初始化Kimi LLM
+        llm = ChatOpenAI(
+            openai_api_key=api_key,
+            openai_api_base="https://api.moonshot.cn/v1",
+            model_name=model,
+            temperature=0.9,
+            max_tokens=1500,
+            streaming=True,
+            callbacks=[StreamingStdOutCallbackHandler()]
+        )
+
+        # 2. 创建聊天提示模板
+        chat_prompt = ChatPromptTemplate.from_messages([
+            ("user", "{prompt}")
+        ])
+
+        # 3. 创建输出解析器
+        output_parser = StrOutputParser()
+
+        # 4. 构建LangChain链
+        chain = chat_prompt | llm | output_parser
+
+        # 5. 执行链并获取结果
+        response = chain.invoke({"prompt": prompt})
+        return response.strip()
+
     except Exception as e:
-        return f"未知错误：{str(e)}"
+        error_msg = str(e)
+        if "API key" in error_msg or "authentication" in error_msg.lower():
+            return f"API密钥错误：请检查你的Kimi API Key是否正确。错误详情：{error_msg}"
+        elif "timeout" in error_msg.lower():
+            return "API请求超时，请检查网络或稍后重试"
+        elif "429" in error_msg:
+            return "请求频率过高，请稍等片刻再试（API限流）"
+        else:
+            return f"请求出错：{error_msg}"
 
 
-# ===================== Streamlit 界面交互（适配诗歌创作） =====================
-# 侧边栏：API密钥配置（保留，无修改）
+# ===================== Streamlit 界面交互（保持原有功能不变） =====================
+# 侧边栏：API密钥配置
 with st.sidebar:
     st.markdown('<div class="card-title">🔑 API 配置</div>', unsafe_allow_html=True)
     kimi_api_key = st.text_input(
@@ -153,16 +177,16 @@ with st.sidebar:
         help="模型越大，支持的输入输出内容越长（长诗推荐32k/128k）"
     )
 
-# 主界面：AI诗歌创作助手（核心修改）
+# 主界面：AI诗歌创作助手
 st.title("📜 AI 诗歌创作助手")
-st.subheader("基于 Kimi AI 生成高质量的古体诗、现代诗、词牌等原创诗歌")
+st.subheader("基于 Kimi AI + LangChain 生成高质量的古体诗、现代诗、词牌等原创诗歌")
 st.markdown("---")
 
-# 功能选择卡片（替换为诗歌类型）
+# 功能选择卡片
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.markdown('<div class="card-title">📝 选择诗歌创作类型</div>', unsafe_allow_html=True)
 function_type = st.radio(
-    "", # 隐藏默认标签
+    "",  # 隐藏默认标签
     ["七言律诗", "五言绝句", "现代自由诗", "经典词牌创作", "藏头诗", "节日主题诗"],
     horizontal=True,
     captions=[
@@ -176,10 +200,9 @@ function_type = st.radio(
 )
 st.markdown('</div>', unsafe_allow_html=True)
 
-# 输入区卡片（适配诗歌创作需求）
+# 输入区卡片
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.markdown('<div class="card-title">💡 输入你的诗歌创作需求</div>', unsafe_allow_html=True)
-# 不同诗歌类型的占位符示例
 placeholder_map = {
     "七言律诗": "例如：以「秋日登高」为主题创作一首七言律诗，要求意境开阔，符合平仄格律，押韵平水韵下平十一尤。",
     "五言绝句": "例如：以「江南春雨」为主题创作一首五言绝句，语言清新，情景交融，押韵平水韵上平一东。",
@@ -189,13 +212,13 @@ placeholder_map = {
     "节日主题诗": "例如：创作一首关于「春节团圆」的五言律诗，氛围喜庆，贴合节日场景，押韵平水韵。"
 }
 user_input = st.text_area(
-    "", # 隐藏默认标签
+    "",  # 隐藏默认标签
     placeholder=placeholder_map[function_type],
     height=150,
     help="越详细的需求（主题、意境、格律、押韵要求），生成的诗歌质量越高"
 )
 
-# 附加选项（适配诗歌创作）
+# 附加选项
 col1, col2 = st.columns(2)
 with col1:
     add_notes = st.checkbox("📝 生成诗歌注释（解释意境/格律）", value=True)
@@ -204,15 +227,13 @@ with col2:
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-
-# 生成按钮（修改文案）
+# 生成按钮
 if st.button("🔥 开始创作诗歌", use_container_width=True):
     if not kimi_api_key:
         st.error("❌ 请先在左侧侧边栏输入你的 Kimi API Key！")
     elif not user_input.strip():
         st.warning("⚠️ 创作需求不能为空，请输入诗歌主题/意境等要求。")
     else:
-        # 构建诗歌专属Prompt（核心修改）
         prompt_base = f"""
         你是一位专业的古典文学和现代诗歌创作专家。请根据用户需求，创作一份高质量的「{function_type}」，要求如下：
         1. 内容原创，符合所选诗歌类型的格式/格律要求（无格律的现代诗除外）；
@@ -221,23 +242,20 @@ if st.button("🔥 开始创作诗歌", use_container_width=True):
         4. 排版清晰，每句单独成行，便于阅读和朗诵。
         用户创作需求：「{user_input}」
         """
-        # 附加选项的Prompt补充
         if add_notes:
             prompt_base += "5. 在诗歌后添加注释：解释诗歌的创作思路、意境内涵，古体诗需额外说明格律/押韵规则。"
         if add_recitation:
             prompt_base += "6. 推荐2-3首适配诗歌情感的背景音乐（如古筝/钢琴曲目），并说明朗诵时的节奏/语速建议。"
 
-        # 显示加载状态并生成诗歌
         with st.spinner("🤖 AI 正在构思诗句，为您创作中..."):
-            generated_text = call_kimi_api(kimi_api_key, prompt_base, model_option)
+            generated_text = call_kimi_api_langchain(kimi_api_key, prompt_base, model_option)
 
-        # 展示结果（保留样式，适配诗歌排版）
         st.markdown("---")
         st.markdown('<div class="card-title">🎯 诗歌创作结果</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="generated-content">{generated_text}</div>', unsafe_allow_html=True)
         st.success("✅ 诗歌创作完成！您可以直接复制使用。")
 
-# 示例提示（替换为诗歌创作示例）
+# 示例提示
 with st.expander("📌 点击查看优秀诗歌创作需求示例"):
     st.write("""
     *   **七言律诗**: 以「边塞戍边」为主题创作七言律诗，风格雄浑悲壮，符合平水韵下平声七阳，颔联颈联对仗工整。
