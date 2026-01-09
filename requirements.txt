@@ -1,3 +1,6 @@
+# requirements.txt
 streamlit
-openai==0.28.1
-python-dotenv
+langchain
+langchain-core
+langchain-openai
+requests
